@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>ESP32-S3 Relay Dashboard</title>
+  <!-- Fast reliable MQTT library over HTTPS -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
+  <script>
+    if (typeof mqtt === "undefined") {
+      document.write('<script src="https://unpkg.com/mqtt@4.3.7/dist/mqtt.min.js"><\/script>');
+    }
+  </script>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --card: #1f2937;
+      --accent: #22d3ee;
+      --accent-strong: #0ea5e9;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --danger: #ef4444;
+      --success: #22c55e;
+      --shadow: 0 10px 30px -10px rgba(0,0,0,0.5);
+      --radius: 14px;
+      /* 0ms instantaneous snap — zero animation lag for high-speed industrial switching */
+      --transition: 0ms;
+    }
+    * { 
+      box-sizing: border-box; 
+      -webkit-tap-highlight-color: transparent;
+    }
+    body {
+      margin: 0;
+      font-family: "Inter", system-ui, -apple-system, sans-serif;
+      background: radial-gradient(120% 120% at 50% 20%, rgba(34,211,238,0.08), transparent 50%), var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 24px 24px 0;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.35rem;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.06);
+      color: var(--muted);
+      font-size: 0.92rem;
+      font-weight: 500;
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--danger);
+      box-shadow: 0 0 0 5px rgba(239,68,68,0.14);
+    }
+    .dot.connected {
+      background: var(--success);
+      box-shadow: 0 0 0 5px rgba(34,197,94,0.18);
+    }
+    main {
+      padding: 24px;
+    }
+    .actions {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 20px;
+    }
+    button {
+      border: none;
+      cursor: pointer;
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 0.95rem;
+      padding: 11px 20px;
+      touch-action: manipulation;
+    }
+    .btn-all-on {
+      background: #16a34a;
+      color: #ffffff;
+      box-shadow: 0 4px 14px rgba(22,163,74,0.3);
+    }
+    .btn-all-on:active { transform: scale(0.97); }
+    .btn-all-off {
+      background: #dc2626;
+      color: #ffffff;
+      box-shadow: 0 4px 14px rgba(220,38,38,0.3);
+    }
+    .btn-all-off:active { transform: scale(0.97); }
+    .btn-ghost {
+      background: rgba(255,255,255,0.06);
+      color: var(--text);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .btn-ghost:active { transform: scale(0.97); }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: var(--radius);
+      padding: 18px;
+      box-shadow: var(--shadow);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      position: relative;
+      overflow: hidden;
+      cursor: pointer;
+      user-select: none;
+      touch-action: manipulation;
+    }
+    .card.on {
+      border-color: rgba(34,211,238,0.4);
+      background: #1e293b;
+    }
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .card-title {
+      font-weight: 700;
+      font-size: 1rem;
+    }
+    .card-sub {
+      color: var(--muted);
+      font-size: 0.88rem;
+      margin-top: 2px;
+    }
+    .state {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      font-size: 0.92rem;
+      color: var(--muted);
+    }
+    .state-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--danger);
+      box-shadow: 0 0 0 4px rgba(239,68,68,0.12);
+    }
+    .state.on { color: var(--success); }
+    .state.on .state-dot {
+      background: var(--success);
+      box-shadow: 0 0 0 4px rgba(34,197,94,0.18);
+    }
+
+    /* Instantaneous 0ms Industrial Toggle */
+    .toggle {
+      position: relative;
+      width: 62px;
+      height: 32px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.1);
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+    .thumb {
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: #ffffff;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    }
+    .toggle.on {
+      background: #0284c7;
+      border-color: #38bdf8;
+    }
+    .toggle.on .thumb {
+      transform: translateX(30px);
+      background: #ffffff;
+    }
+
+    .footer {
+      margin-top: 24px;
+      color: var(--muted);
+      font-size: 0.88rem;
+      line-height: 1.6;
+    }
+    .disabled {
+      opacity: 0.5;
+      pointer-events: none;
+    }
+    @media (max-width: 640px) {
+      header { padding: 18px 16px 0; }
+      main { padding: 16px; }
+      .actions { gap: 8px; }
+      button { padding: 10px 16px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>ESP32-S3 · Industrial 8-Channel Relay Controller</h1>
+      <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px;">
+        <!-- MQTT Broker Connection Status -->
+        <div class="pill" title="Web browser MQTT connection">
+          <span class="dot" id="conn-dot"></span>
+          <span id="conn-text">Connecting Broker...</span>
+        </div>
+        <!-- ESP32 Hardware Live Online/Offline Status -->
+        <div class="pill" title="ESP32 hardware live connection status">
+          <span class="dot" id="esp-dot"></span>
+          <span id="esp-text">ESP32 Offline</span>
+        </div>
+        <!-- Live OTA Link Pill -->
+        <a id="ota-link" class="pill" href="#" target="_blank" style="display:none; text-decoration:none; color:#38bdf8; border-color:rgba(56,189,248,0.3);">
+          ⚡ <span id="esp-ip-text">OTA Update</span>
+        </a>
+      </div>
+    </div>
+    <div class="pill" id="client-id-pill"></div>
+  </header>
+
+  <main>
+    <div class="actions">
+      <!-- ALL ON BUTTON -->
+      <button class="btn-all-on" id="all-on-btn">⚡ ALL ON</button>
+      <!-- ALL OFF BUTTON -->
+      <button class="btn-all-off" id="all-off-btn">⬛ ALL OFF</button>
+      <!-- RECONNECT BUTTON -->
+      <button class="btn-ghost" id="reconnect-btn">↻ Reconnect</button>
+    </div>
+
+    <!-- 8 Hardware Channel Cards -->
+    <div class="grid" id="cards"></div>
+
+    <div class="footer">
+      MQTT Broker: <strong>broker.emqx.io</strong> · Base Topic: <code>smart_innovation_lab_ecb_eice</code><br/>
+      Zero-delay streaming (QoS 0) · Wireless OTA Enabled · Instant synchronization.
+    </div>
+  </main>
+
+  <script>
+    // ---- Configuration ----
+    const BROKER_URL = "wss://broker.emqx.io:8084/mqtt";
+    const BASE_TOPIC = "smart_innovation_lab_ecb_eice";
+
+    // 8 Hardware Channels (21 as Relay 1 to 14 as Relay 8)
+    const RELAY_CHANNELS = [
+      { id: 1, relayPin: 21, switchPin: 23 },
+      { id: 2, relayPin: 19, switchPin: 22 },
+      { id: 3, relayPin: 18, switchPin: 34 },
+      { id: 4, relayPin: 17, switchPin: 32 },
+      { id: 5, relayPin: 16, switchPin: 33 },
+      { id: 6, relayPin: 4,  switchPin: 25 },
+      { id: 7, relayPin: 13, switchPin: 26 },
+      { id: 8, relayPin: 14, switchPin: 27 },
+    ];
+
+    // ---- DOM Elements ----
+    const cardsEl = document.getElementById("cards");
+    const connDot = document.getElementById("conn-dot");
+    const connText = document.getElementById("conn-text");
+    const espDot = document.getElementById("esp-dot");
+    const espText = document.getElementById("esp-text");
+    const otaLink = document.getElementById("ota-link");
+    const espIpText = document.getElementById("esp-ip-text");
+    const clientIdPill = document.getElementById("client-id-pill");
+    const allOnBtn = document.getElementById("all-on-btn");
+    const allOffBtn = document.getElementById("all-off-btn");
+    const reconnectBtn = document.getElementById("reconnect-btn");
+
+    // ---- ESP32 Online / Offline Tracking ----
+    let espLastSeen = 0;
+
+    function markEspOnline() {
+      espLastSeen = Date.now();
+      if (!espDot || !espText) return;
+      espDot.classList.add("connected");
+      espText.textContent = "ESP32 Online";
+      espText.style.color = "var(--success)";
+    }
+
+    function markEspOffline() {
+      if (!espDot || !espText) return;
+      espDot.classList.remove("connected");
+      espText.textContent = "ESP32 Offline";
+      espText.style.color = "var(--danger)";
+    }
+
+    // Industrial Watchdog: if no heartbeat or message received for > 6 seconds, mark Offline
+    setInterval(() => {
+      if (espLastSeen > 0 && (Date.now() - espLastSeen > 6000)) {
+        markEspOffline();
+      }
+    }, 1000);
+
+    // ---- Build Relay Cards ----
+    const relays = [];
+    RELAY_CHANNELS.forEach(item => {
+      const card = document.createElement("div");
+      card.className = "card";
+      card.innerHTML = `
+        <div class="card-header">
+          <div>
+            <div class="card-title">Relay ${item.id} (GPIO ${item.relayPin})</div>
+            <div class="card-sub">Switch: GPIO ${item.switchPin} <span id="sw-state-${item.id}">· [OFF]</span></div>
+          </div>
+          <div class="state" id="state-${item.id}">
+            <span class="state-dot"></span>
+            <span>OFF</span>
+          </div>
+        </div>
+        <div style="display:flex; justify-content:flex-end;">
+          <div class="toggle" id="toggle-${item.id}" role="button" aria-label="Toggle Relay ${item.id}">
+            <div class="thumb"></div>
+          </div>
+        </div>
+      `;
+      cardsEl.appendChild(card);
+      relays.push({
+        idx: item.id,
+        relayPin: item.relayPin,
+        switchPin: item.switchPin,
+        card,
+        stateEl: card.querySelector(`#state-${item.id}`),
+        toggleEl: card.querySelector(`#toggle-${item.id}`),
+      });
+    });
+
+    function setConnectionState(connected) {
+      if (connected) {
+        connDot.classList.add("connected");
+        connText.textContent = "Broker Connected";
+        allOnBtn.classList.remove("disabled");
+        allOffBtn.classList.remove("disabled");
+        reconnectBtn.classList.add("disabled");
+      } else {
+        connDot.classList.remove("connected");
+        connText.textContent = "Broker Disconnected";
+        allOnBtn.classList.add("disabled");
+        allOffBtn.classList.add("disabled");
+        reconnectBtn.classList.remove("disabled");
+        markEspOffline();
+      }
+    }
+
+    // Instant UI state update (0ms, atomic synchronization)
+    function updateRelayState(idx, on) {
+      const relay = relays[idx - 1];
+      if (!relay) return;
+      relay.card.classList.toggle("on", on);
+      relay.stateEl.classList.toggle("on", on);
+      relay.stateEl.querySelector("span:last-child").textContent = on ? "ON" : "OFF";
+      relay.toggleEl.classList.toggle("on", on);
+
+      // Atomically keep the switch status indicator in sync!
+      const swTextEl = document.getElementById(`sw-state-${idx}`);
+      if (swTextEl) {
+        swTextEl.textContent = `· [${on ? "ON" : "OFF"}]`;
+        swTextEl.style.color = on ? "var(--success)" : "var(--muted)";
+      }
+    }
+
+    // ---- MQTT Client Setup ----
+    let client = null;
+    const clientId = `webdash-${Math.random().toString(16).slice(2, 10)}`;
+    clientIdPill.textContent = `Client: ${clientId}`;
+
+    const options = {
+      clientId,
+      reconnectPeriod: 1000,
+      clean: true,
+      connectTimeout: 5000,
+      keepalive: 15,
+      protocolVersion: 4,
+    };
+
+    function connectMQTT() {
+      if (client) {
+        try { client.end(true); } catch (e) {}
+      }
+      client = mqtt.connect(BROKER_URL, options);
+
+      client.on("connect", () => {
+        setConnectionState(true);
+        subscribeTopics();
+      });
+
+      client.on("reconnect", () => setConnectionState(false));
+      client.on("close",     () => setConnectionState(false));
+      client.on("offline",   () => setConnectionState(false));
+      client.on("error",     (err) => console.error("MQTT error:", err));
+
+      client.on("message", (topic, payload) => {
+        const raw = payload.toString().trim();
+        const rawUpper = raw.toUpperCase();
+        const isOn = (rawUpper === "ON" || rawUpper === "1" || rawUpper === "ALL_ON");
+
+        // 1. ESP32 LWT Status
+        if (topic === `${BASE_TOPIC}/status` || topic.endsWith("/status")) {
+          if (rawUpper === "OFFLINE") {
+            markEspOffline();
+          } else if (rawUpper === "ONLINE") {
+            markEspOnline();
+          }
+          return;
+        }
+
+        // 2. ESP32 Local IP address for OTA link
+        if (topic === `${BASE_TOPIC}/ip` || topic.endsWith("/ip")) {
+          if (raw.length >= 7) {
+            otaLink.href = `http://${raw}/update`;
+            espIpText.textContent = `OTA: ${raw}`;
+            otaLink.style.display = "inline-flex";
+          }
+          return;
+        }
+
+        // 3. Any incoming message proves ESP32 is online
+        markEspOnline();
+
+        // 4. System All command reflection
+        if (topic.endsWith("/system/all")) {
+          if (raw.length === 0) return;
+          for (let i = 1; i <= relays.length; i++) {
+            updateRelayState(i, isOn);
+          }
+          return;
+        }
+
+        // 5. Individual Relay State (smart_innovation_lab_ecb_eice/relay/{1-8}/state)
+        const matchRelay = topic.match(/relay\/(\d+)\/state$/i);
+        if (matchRelay) {
+          const idx = Number(matchRelay[1]);
+          updateRelayState(idx, isOn);
+          return;
+        }
+
+        // 6. Physical Switch State (smart_innovation_lab_ecb_eice/switch/{1-8}/state)
+        const matchSw = topic.match(/switch\/(\d+)\/state$/i);
+        if (matchSw) {
+          const idx = Number(matchSw[1]);
+          const swTextEl = document.getElementById(`sw-state-${idx}`);
+          if (swTextEl) {
+            swTextEl.textContent = `· [${isOn ? "ON" : "OFF"}]`;
+            swTextEl.style.color = isOn ? "var(--success)" : "var(--muted)";
+          }
+        }
+      });
+    }
+
+    // Subscribe with QoS 0 for zero-delay instant packet delivery (no WebSocket ACK queuing!)
+    function subscribeTopics() {
+      for (let i = 1; i <= relays.length; i++) {
+        client.subscribe(`${BASE_TOPIC}/relay/${i}/state`, { qos: 0 });
+        client.subscribe(`${BASE_TOPIC}/switch/${i}/state`, { qos: 0 });
+      }
+      client.subscribe(`${BASE_TOPIC}/system/all`, { qos: 0 });
+      client.subscribe(`${BASE_TOPIC}/status`, { qos: 0 });
+      client.subscribe(`${BASE_TOPIC}/ip`, { qos: 0 });
+    }
+
+    // Fast QoS 0 retained command dispatch
+    function publishCommand(idx, on) {
+      if (!client || !client.connected) return;
+      client.publish(`${BASE_TOPIC}/relay/${idx}/cmd`, on ? "ON" : "OFF", { qos: 0, retain: true });
+    }
+
+    function publishAllOn() {
+      if (!client || !client.connected) return;
+      client.publish(`${BASE_TOPIC}/system/all`, "ALL_ON", { qos: 0, retain: false });
+      relays.forEach(r => {
+        updateRelayState(r.idx, true);
+        publishCommand(r.idx, true);
+      });
+    }
+
+    function publishAllOff() {
+      if (!client || !client.connected) return;
+      client.publish(`${BASE_TOPIC}/system/all`, "ALL_OFF", { qos: 0, retain: false });
+      relays.forEach(r => {
+        updateRelayState(r.idx, false);
+        publishCommand(r.idx, false);
+      });
+    }
+
+    // ---- UI Click Handlers (Instant 0ms tactile response on Card or Switch) ----
+    relays.forEach(r => {
+      const handleToggle = (e) => {
+        e.preventDefault();
+        const willTurnOn = !r.toggleEl.classList.contains("on");
+        // Instant visual update (0ms delay)
+        updateRelayState(r.idx, willTurnOn);
+        // Instant MQTT dispatch
+        publishCommand(r.idx, willTurnOn);
+      };
+
+      r.card.addEventListener("click", handleToggle);
+    });
+
+    allOnBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      publishAllOn();
+    });
+
+    allOffBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      publishAllOff();
+    });
+
+    reconnectBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      if (client && client.connected) return;
+      setConnectionState(false);
+      connectMQTT();
+    });
+
+    // ---- Boot ----
+    setConnectionState(false);
+    connectMQTT();
+  </script>
+</body>
+</html>
